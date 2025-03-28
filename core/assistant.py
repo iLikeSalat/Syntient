@@ -6,14 +6,25 @@ This module handles:
 - OpenAI API integration
 - Response processing
 - Planning and execution logic
+- Tool invocation support
 """
 
 import os
 import json
 import time
+import re
 import requests
+import logging
 from typing import Dict, List, Any, Optional, Union
 
+from tools import registry
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 class Assistant:
     """
@@ -54,6 +65,15 @@ class Assistant:
         3. Use available tools when needed
         4. Provide clear updates on progress
         5. Deliver final results in a clear format
+        
+        To use a tool, include a tool call in your response using this format:
+        <<TOOL:tool_name {"param1": "value1", "param2": "value2"}>>
+        
+        Available tools:
+        - browser_use: Browse websites and extract information
+        - file_parser: Parse and extract information from files
+        - code_executor: Execute code in various programming languages
+        - web_search: Search the web for information
         """
         
         # Store conversation history
@@ -61,6 +81,9 @@ class Assistant:
         
         # Available tools registry
         self.tools = {}
+        
+        # Initialize tool registry
+        self.tool_registry = registry
     
     def register_tool(self, tool_name: str, tool_function: callable):
         """
@@ -97,13 +120,39 @@ class Assistant:
         Returns:
             List of message dictionaries for the API request
         """
-        messages = [{"role": "system", "content": self.system_prompt.strip()}]
+        # Update system prompt with available tools
+        tools_info = self._get_tools_info()
+        updated_system_prompt = self.system_prompt.strip() + "\n\nAvailable tools:\n" + tools_info
+        
+        messages = [{"role": "system", "content": updated_system_prompt}]
         
         if include_history and self.conversation_history:
             messages.extend(self.conversation_history)
         
         messages.append({"role": "user", "content": user_input})
         return messages
+    
+    def _get_tools_info(self) -> str:
+        """
+        Get information about available tools for the system prompt.
+        
+        Returns:
+            String containing tool descriptions
+        """
+        tools_info = ""
+        
+        # Get tools from the registry
+        tool_schemas = self.tool_registry.list_tools()
+        
+        for name, schema in tool_schemas.items():
+            tools_info += f"- {name}: {schema['description']}\n"
+        
+        # Add legacy tools
+        for name in self.tools:
+            if name not in tool_schemas:
+                tools_info += f"- {name}: Legacy tool\n"
+        
+        return tools_info
     
     def call_openai_api(self, messages: List[Dict[str, str]], 
                        temperature: float = 0.7, 
@@ -179,18 +228,17 @@ class Assistant:
         Returns:
             Processed response with extracted components
         """
-        # Check if the response contains a tool call
-        if "<<TOOL:" in response_content and ">>" in response_content:
-            # Extract tool call information
-            tool_start = response_content.find("<<TOOL:")
-            tool_end = response_content.find(">>", tool_start)
-            tool_info = response_content[tool_start+7:tool_end].strip()
+        # Check if the response contains a tool call using the new format
+        tool_pattern = r"<<TOOL:(\w+)\s+({.*?})>>"
+        tool_matches = re.findall(tool_pattern, response_content)
+        
+        if tool_matches:
+            # Extract the first tool call
+            tool_name, tool_args_str = tool_matches[0]
             
             try:
-                # Parse tool name and arguments
-                tool_parts = tool_info.split(" ", 1)
-                tool_name = tool_parts[0]
-                tool_args = json.loads(tool_parts[1]) if len(tool_parts) > 1 else {}
+                # Parse tool arguments
+                tool_args = json.loads(tool_args_str)
                 
                 return {
                     "type": "tool_call",
@@ -233,13 +281,31 @@ class Assistant:
         Returns:
             Result of the tool execution
         """
-        if tool_name not in self.tools:
-            raise ValueError(f"Tool '{tool_name}' is not registered")
+        # First, try to use the tool registry
+        tool = self.tool_registry.get_tool(tool_name)
+        if tool:
+            try:
+                logger.info(f"Executing tool from registry: {tool_name}")
+                return tool.execute(**args)
+            except Exception as e:
+                error_msg = f"Tool execution failed: {str(e)}"
+                logger.error(error_msg)
+                return {"error": error_msg}
         
-        try:
-            return self.tools[tool_name](**args)
-        except Exception as e:
-            return {"error": f"Tool execution failed: {str(e)}"}
+        # Fall back to legacy tools
+        if tool_name in self.tools:
+            try:
+                logger.info(f"Executing legacy tool: {tool_name}")
+                return self.tools[tool_name](**args)
+            except Exception as e:
+                error_msg = f"Legacy tool execution failed: {str(e)}"
+                logger.error(error_msg)
+                return {"error": error_msg}
+        
+        # Tool not found
+        error_msg = f"Tool '{tool_name}' is not registered"
+        logger.error(error_msg)
+        return {"error": error_msg}
     
     def ask(self, user_input: str, include_history: bool = True) -> Dict[str, Any]:
         """
@@ -261,20 +327,38 @@ class Assistant:
         # Extract the response content
         response_content = self.extract_response_content(api_response)
         
-        # Add the response to conversation history
-        self.add_message_to_history("user", user_input)
-        self.add_message_to_history("assistant", response_content)
-        
         # Process the response
         processed_response = self.process_response(response_content)
         
         # If the response contains a tool call, execute it
         if processed_response["type"] == "tool_call":
-            tool_result = self.execute_tool(
-                processed_response["tool"], 
-                processed_response["args"]
-            )
+            tool_name = processed_response["tool"]
+            tool_args = processed_response["args"]
+            
+            # Execute the tool
+            tool_result = self.execute_tool(tool_name, tool_args)
             processed_response["tool_result"] = tool_result
+            
+            # Append the tool result to the response
+            original_response = processed_response["original_response"]
+            tool_call_text = f"<<TOOL:{tool_name} {json.dumps(tool_args)}>>"
+            tool_result_text = f"\n\nTool Result: {json.dumps(tool_result, indent=2)}"
+            
+            # Replace the tool call with the tool call + result
+            updated_response = original_response.replace(
+                tool_call_text, 
+                f"{tool_call_text}{tool_result_text}"
+            )
+            
+            # Update the processed response
+            processed_response["response"] = updated_response
+        
+        # Add the user input and assistant response to conversation history
+        self.add_message_to_history("user", user_input)
+        
+        # For the assistant's message, use the updated response if available
+        assistant_response = processed_response.get("response", response_content)
+        self.add_message_to_history("assistant", assistant_response)
         
         return processed_response
     

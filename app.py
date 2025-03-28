@@ -15,6 +15,7 @@ from core.assistant import Assistant
 from core.continuous_loop import ContinuousExecutionLoop
 from core.enhanced_planning import EnhancedPlanner
 
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -30,15 +31,20 @@ app = Flask(__name__, static_folder='static')
 
 # Initialize the assistant
 api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    logger.warning("OpenAI API key not found. Set the OPENAI_API_KEY environment variable.")
+if api_key:
+    logger.info("✅ OpenAI API key loaded from .env")
+else:
+    logger.warning("⚠️ OpenAI API key not found. Set OPENAI_API_KEY in .env")
 
-assistant = Assistant(api_key=api_key)
-planner = EnhancedPlanner(assistant=assistant)
+
+
 
 from tools.tool_registry import registry
 assistant = Assistant(api_key=api_key, tool_registry=registry)
-
+planner = EnhancedPlanner(assistant=assistant)
+# Disable simulated fallback to clearly see if LLM tool selection is working
+assistant.set_simulated_fallback(False)
+assistant.set_llm_tool_selection(True)  # Optional but explicit
 
 # Store active tasks
 active_tasks = {}
@@ -64,12 +70,15 @@ def ask():
     
     logger.info("📥 Received request at /api/ask")
     logger.info(f"Request JSON: {json.dumps(request.json, indent=2)}")
+    logger.info(f"LLM tool selection enabled: {assistant.use_llm_tool_selection}")
+    logger.info(f"Simulated fallback enabled: {assistant.use_simulated_fallback}")
+    
 
 
     try:
         # Get response from assistant
         response = assistant.ask(message)
-        
+        logger.info(f"🧠 Final assistant response: {response}")
         return jsonify({
             'response': response.get('response', ''),
             'type': response.get('type', 'response')

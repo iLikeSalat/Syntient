@@ -1,6 +1,10 @@
 # Syntient AI Assistant Platform
 
+<<<<<<< HEAD
 Your personal AI agent platform - a modular, extensible AI assistant platform designed to be evolved into a SaaS tool. This platform enables the creation of AI assistants that can plan, execute tasks, use tools, and maintain memory across interactions.
+=======
+A modular, extensible AI assistant platform designed to be evolved into a SaaS tool. This platform enables the creation of AI assistants that can plan, execute tasks, use tools, and maintain memory across interactions.
+>>>>>>> d8bfe0bf747d5f5f305f38ba8174fd679c606011
 
 ## 🔧 Tech Stack
 
@@ -15,19 +19,38 @@ Your personal AI agent platform - a modular, extensible AI assistant platform de
 ```
 syntient/
 ├── app.py                 # Flask API with /ask endpoint
+<<<<<<< HEAD
+=======
+├── config.py              # Configuration utilities
+├── run.py                 # Main entry point
+>>>>>>> d8bfe0bf747d5f5f305f38ba8174fd679c606011
 ├── core/                  # Core assistant functionality
 │   ├── __init__.py
 │   └── assistant.py       # Handles prompts and model responses
 ├── tools/                 # Modular agent tools
 │   ├── __init__.py
+<<<<<<< HEAD
+=======
+│   ├── base.py            # Base Tool interface
+>>>>>>> d8bfe0bf747d5f5f305f38ba8174fd679c606011
 │   ├── telegram/          # Telegram bot integration
 │   ├── trading/           # Trading capabilities
 │   └── file_parser/       # File parsing utilities
 ├── memory/                # Long-term memory system
+<<<<<<< HEAD
 │   └── __init__.py
 ├── .env                   # API keys and configuration (not in repo)
 ├── .env.example           # Example configuration template
 └── requirements.txt       # Project dependencies
+=======
+│   ├── __init__.py
+│   ├── base.py            # Memory interface
+│   └── simple.py          # SimpleMemory implementation
+├── .env                   # API keys and configuration (not in repo)
+├── .env.example           # Example configuration template
+├── requirements.txt       # Project dependencies
+└── setup.py               # Package setup script
+>>>>>>> d8bfe0bf747d5f5f305f38ba8174fd679c606011
 ```
 
 ## 🔄 Agent Behavior
@@ -76,7 +99,11 @@ The Syntient AI Assistant:
 
 1. Start the Flask API:
    ```
+<<<<<<< HEAD
    python app.py
+=======
+   python run.py
+>>>>>>> d8bfe0bf747d5f5f305f38ba8174fd679c606011
    ```
 
 2. Send requests to the `/ask` endpoint:

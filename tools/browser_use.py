@@ -54,7 +54,12 @@ class BrowserUseTool(Tool):
             Dictionary containing the extracted information
         """
         logger.info(f"BrowserUseTool: Browsing URL: {url}")
-        
+                
+        logger.info("🔧 browser_use tool triggered")
+        logger.info(f"🧭 Target URL: {url}")
+
+
+
         try:
             # Make the request
             response = requests.get(url, headers=self.headers, timeout=10)

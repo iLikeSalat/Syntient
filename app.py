@@ -36,6 +36,10 @@ if not api_key:
 assistant = Assistant(api_key=api_key)
 planner = EnhancedPlanner(assistant=assistant)
 
+from tools.tool_registry import registry
+assistant = Assistant(api_key=api_key, tool_registry=registry)
+
+
 # Store active tasks
 active_tasks = {}
 
@@ -58,6 +62,10 @@ def ask():
     user_id = data.get('user_id', 'default_user')
     message = data['message']
     
+    logger.info("📥 Received request at /api/ask")
+    logger.info(f"Request JSON: {json.dumps(request.json, indent=2)}")
+
+
     try:
         # Get response from assistant
         response = assistant.ask(message)

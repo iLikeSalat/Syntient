@@ -33,15 +33,8 @@ class Assistant:
     Core assistant class that handles interactions with the OpenAI API
     and manages the planning and execution of tasks.
     """
-    
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):
-        """
-        Initialize the Assistant with API credentials and configuration.
         
-        Args:
-            api_key: OpenAI API key (defaults to environment variable)
-            model: Model to use for completions (default: gpt-3.5-turbo)
-        """
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo", tool_registry=None):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OpenAI API key is required. Set it in .env or pass to constructor.")
@@ -78,25 +71,16 @@ class Assistant:
         - web_search: Search the web for information
         """
         
-        # Store conversation history
         self.conversation_history = []
-        
-        # Available tools registry
         self.tools = {}
-        
-        # Initialize tool registry
-        self.tool_registry = registry
-        
-        # Initialize task detector
+
+        # NEW: add registry and auto tool support
+        self.tool_registry = tool_registry
+        from core.task_detector import TaskDetector
+        from core.simulated_flow import SimulatedFlowHandler
         self.task_detector = TaskDetector()
-        
-        # Initialize simulated flow handler
         self.simulated_flow = SimulatedFlowHandler()
-        
-        # Flag to control automatic tool detection
         self.auto_detect_tools = True
-        
-        # Flag to control fallback to simulated flow
         self.use_simulated_fallback = True
     
     def register_tool(self, tool_name: str, tool_function: callable):
@@ -322,170 +306,57 @@ class Assistant:
         return {"error": error_msg, "status": "error"}
     
     def ask(self, user_input: str, include_history: bool = True) -> Dict[str, Any]:
-        """
-        Process a user request and generate a response.
-        
-        Args:
-            user_input: User's input message
-            include_history: Whether to include conversation history
-            
-        Returns:
-            Processed response with any actions or plans
-        """
-        # Check if the input can be automatically handled by a tool
         if self.auto_detect_tools:
             detected_task = self.task_detector.detect_task(user_input)
             if detected_task:
                 tool_name, tool_args = detected_task
-                logger.info(f"Automatically detected task for tool: {tool_name}")
-                
-                # Execute the tool
-                tool_result = self.execute_tool(tool_name, tool_args)
-                
-                # Format the tool call for inclusion in the response
-                tool_call_text = self.task_detector.format_tool_call(tool_name, tool_args)
-                
-                # Create a response that includes the tool call and result
-                if tool_result.get("status") == "success":
-                    result_header = "\n\n**Tool Execution Successful**\n\n"
+                logger.info(f"🛠 Auto-detected task: {tool_name} with args {tool_args}")
+
+                # Execute the tool via the registry
+                tool_result = None
+                if self.tool_registry:
+                    tool_result = self.tool_registry.execute_tool(tool_name, **tool_args)
                 else:
-                    result_header = "\n\n**Tool Execution Failed**\n\n"
-                
+                    logger.warning("⚠️ No tool registry defined")
+
+                tool_call_text = self.task_detector.format_tool_call(tool_name, tool_args)
+                result_header = "\n\n**Tool Execution Successful**\n\n" if tool_result.get("status") == "success" else "\n\n**Tool Execution Failed**\n\n"
                 formatted_result = json.dumps(tool_result, indent=2)
                 tool_result_text = f"{result_header}```json\n{formatted_result}\n```\n\n"
-                
-                # Create a modified user input that includes the tool call
+
                 modified_user_input = f"{user_input}\n\n{tool_call_text}"
-                
-                # Create messages for the API request with the modified user input
                 messages = self.create_messages(modified_user_input, include_history)
-                
-                # Call the OpenAI API to get a response that incorporates the tool result
                 api_response = self.call_openai_api(messages)
                 response_content = self.extract_response_content(api_response)
-                
-                # Process the response
                 processed_response = self.process_response(response_content)
-                
-                # Add the tool result to the processed response
+
                 processed_response["tool_result"] = tool_result
                 processed_response["detected_tool"] = tool_name
                 processed_response["detected_args"] = tool_args
-                
-                # Update the response to include the tool call and result
+
+                # Append the actual response
                 if "response" in processed_response:
                     processed_response["response"] = f"{tool_call_text}{tool_result_text}{processed_response['response']}"
                 else:
                     processed_response["response"] = f"{tool_call_text}{tool_result_text}"
-                
-                # Add the user input and assistant response to conversation history
+
+                # Save to memory
                 self.add_message_to_history("user", user_input)
                 self.add_message_to_history("assistant", processed_response["response"])
-                
+
                 return processed_response
-            
-            # If no tool was detected but simulated fallback is enabled, check for simulated tasks
-            elif self.use_simulated_fallback:
-                simulated_task = self.simulated_flow.detect_simulated_task(user_input)
-                if simulated_task:
-                    logger.info(f"Using simulated flow for task type: {simulated_task.get('type', 'unknown')}")
-                    
-                    # Generate a simulated response
-                    simulated_response = self.simulated_flow.generate_simulated_response(simulated_task)
-                    
-                    # Create a processed response
-                    processed_response = {
-                        "type": "simulated",
-                        "simulated_type": simulated_task.get("type", "unknown"),
-                        "response": simulated_response,
-                        "simulated_task": simulated_task
-                    }
-                    
-                    # Add the user input and assistant response to conversation history
-                    self.add_message_to_history("user", user_input)
-                    self.add_message_to_history("assistant", simulated_response)
-                    
-                    return processed_response
-        
-        # If no automatic tool detection or no tool was detected, proceed with normal flow
-        # Create messages for the API request
+
+        # Fallback to default OpenAI-based reasoning
         messages = self.create_messages(user_input, include_history)
-        
-        # Call the OpenAI API
         api_response = self.call_openai_api(messages)
-        
-        # Extract the response content
         response_content = self.extract_response_content(api_response)
-        
-        # Process the response
         processed_response = self.process_response(response_content)
-        
-        # If the response contains a tool call, execute it
-        if processed_response["type"] == "tool_call":
-            tool_name = processed_response["tool"]
-            tool_args = processed_response["args"]
-            
-            # Execute the tool
-            tool_result = self.execute_tool(tool_name, tool_args)
-            processed_response["tool_result"] = tool_result
-            
-            # Append the tool result to the response
-            original_response = processed_response["original_response"]
-            tool_call_text = f"<<TOOL:{tool_name} {json.dumps(tool_args)}>>"
-            tool_result_text = f"\n\n**Tool Result:**\n\n```json\n{json.dumps(tool_result, indent=2)}\n```\n\n"
-            
-            # Replace the tool call with the tool call + result
-            updated_response = original_response.replace(
-                tool_call_text, 
-                f"{tool_call_text}{tool_result_text}"
-            )
-            
-            # Update the processed response
-            processed_response["response"] = updated_response
-            
-            # Add follow-up context if needed for certain tools
-            if tool_name == "browser_use" and tool_result.get("status") == "success":
-                # Create a follow-up message to continue the conversation with the content
-                follow_up_messages = messages.copy()
-                follow_up_messages.append({"role": "assistant", "content": updated_response})
-                follow_up_messages.append({
-                    "role": "user", 
-                    "content": f"I've fetched the content from {tool_args.get('url')}. Please continue with your analysis or summary based on this information."
-                })
-                
-                # Get a follow-up response
-                follow_up_api_response = self.call_openai_api(follow_up_messages)
-                follow_up_content = self.extract_response_content(follow_up_api_response)
-                
-                # Append the follow-up to the response
-                processed_response["response"] = updated_response + "\n\n" + follow_up_content
-                processed_response["follow_up"] = follow_up_content
-            
-            elif tool_name == "code_executor" and tool_result.get("status") == "success":
-                # Create a follow-up message to explain the code execution results
-                follow_up_messages = messages.copy()
-                follow_up_messages.append({"role": "assistant", "content": updated_response})
-                follow_up_messages.append({
-                    "role": "user", 
-                    "content": "I've executed the code. Please explain the results and what they mean."
-                })
-                
-                # Get a follow-up response
-                follow_up_api_response = self.call_openai_api(follow_up_messages)
-                follow_up_content = self.extract_response_content(follow_up_api_response)
-                
-                # Append the follow-up to the response
-                processed_response["response"] = updated_response + "\n\n" + follow_up_content
-                processed_response["follow_up"] = follow_up_content
-        
-        # Add the user input and assistant response to conversation history
+
         self.add_message_to_history("user", user_input)
-        
-        # For the assistant's message, use the updated response if available
-        assistant_response = processed_response.get("response", response_content)
-        self.add_message_to_history("assistant", assistant_response)
-        
+        self.add_message_to_history("assistant", response_content)
+
         return processed_response
+
     
     def plan_execution(self, task: str) -> List[str]:
         """

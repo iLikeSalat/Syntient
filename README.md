@@ -1,6 +1,6 @@
 # Syntient AI Assistant Platform
 
-A modular, extensible AI assistant platform designed to be evolved into a SaaS tool. This platform enables the creation of AI assistants that can plan, execute tasks, use tools, and maintain memory across interactions.
+Your personal AI agent platform - a modular, extensible AI assistant platform designed to be evolved into a SaaS tool. This platform enables the creation of AI assistants that can plan, execute tasks, use tools, and maintain memory across interactions.
 
 ## 🔧 Tech Stack
 
